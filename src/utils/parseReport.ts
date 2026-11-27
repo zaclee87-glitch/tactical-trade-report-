@@ -217,6 +217,9 @@ function splitSections(markdown: string): {
   };
 
   for (const line of lines) {
+    if (/^\s*[-*_]{3,}\s*$/.test(line)) {
+      continue;
+    }
     const hMatch = line.match(/^(#{1,4})\s+(.+)$/);
     if (hMatch) {
       const level = hMatch[1].length;
@@ -440,15 +443,28 @@ export function parseTradeReport(rawMarkdown: string, existingId?: string): Pars
     }
   }
 
-  const sec3bClean = stripSources(stripMd(sec3b)).replace(/\s+/g, ' ').trim();
-  const labeledEvSales = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Forward EV\/Sales:\*\*\s*(.+)$/i)));
-  const labeledPe = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Forward P\/E:\*\*\s*(.+)$/i)));
-  const labeledTakeaway3b = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Takeaway:\*\*\s*(.+)$/i)));
+  const sec3bClean = stripSources(stripMd(sec3b))
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const labeledEvSales = stripSources(
+    stripMd(extractLabeledValue(sec3b, /\*\*(?:Forward\s+)?EV\/Sales[^:*]*:\*\*\s*(.+)$/i))
+  );
+  const labeledPe = stripSources(
+    stripMd(extractLabeledValue(sec3b, /\*\*(?:Forward\s+)?P\/E[^:*]*:\*\*\s*(.+)$/i))
+  );
+  const labeledTakeaway3b = stripSources(
+    stripMd(extractLabeledValue(sec3b, /\*\*(?:Takeaway|Valuation Verdict|Verdict|Summary)[^:*]*:\*\*\s*(.+)$/i))
+  );
 
   // Prose fallbacks for 3b (e.g. RBRK format without labeled bullets)
-  const sentences3b = sec3bClean
+  const masked3b = sec3bClean.replace(
+    /\b(vs|approx|est|e\.g|i\.e|Inc|Ltd|Corp|Co)\./gi,
+    '$1__DOT__'
+  );
+  const sentences3b = masked3b
     .split(/\.(?=\s+[A-Z]|$)/)
-    .map((s) => s.trim())
+    .map((s) => s.replace(/__DOT__/g, '.').trim())
     .filter(Boolean);
   const evSentence = sentences3b.find((s) => /\bEV\/Sales\b/i.test(s)) || '';
   const peSentence = sentences3b.find((s) => /\bP\/E\b/i.test(s)) || '';
@@ -477,15 +493,18 @@ export function parseTradeReport(rawMarkdown: string, existingId?: string): Pars
   const fiveYearTakeaway = labeledTakeaway3b || (remaining3b ? `${remaining3b}.` : sec3bClean);
 
   const sec3cHeading = stripMd(sectionHeadings.get('3c') || '');
-  const sec3cClean = stripSources(stripMd(sec3c)).replace(/\s+/g, ' ').trim();
-  const labeledSectorEtf = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Sector ETF:\*\*\s*(.+)$/i)));
+  const sec3cClean = stripSources(stripMd(sec3c))
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const labeledSectorEtf = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Sector ETF[^:*]*:\*\*\s*(.+)$/i)));
   const etfFromHeading = sec3cHeading.match(/\(([A-Z]{2,5})\)/)?.[1];
   const etfFromBody =
-    sec3cClean.match(/(?:Compared to\s+(?:the\s+)?|vs\.?\s+(?:the\s+)?)([A-Z][A-Za-z0-9&\s-]{2,60}?ETF\s*\([A-Z]{2,5}\))/i)?.[1] ||
+    sec3cClean.match(/(?:Compared (?:to|with)\s+(?:the\s+)?|vs\.?\s+(?:the\s+)?)([A-Z][A-Za-z0-9&\s-]{2,60}?ETF\s*\([A-Z]{2,5}\))/i)?.[1] ||
     sec3cClean.match(/\(([A-Z]{2,5})\)/)?.[1];
   const sectorEtf = labeledSectorEtf || etfFromBody || etfFromHeading || '';
 
-  const labeledEtfComparison = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Comparison & Call:\*\*\s*(.+)$/i)));
+  const labeledEtfComparison = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Comparison & Call[^:*]*:\*\*\s*(.+)$/i)));
   const etfComparison = labeledEtfComparison || sec3cClean;
 
   const etfCallMatch = (sec3c.match(/\*\*2–3 Month Call[^:]*:\s*([^*\n]+)\*\*/i) ||
