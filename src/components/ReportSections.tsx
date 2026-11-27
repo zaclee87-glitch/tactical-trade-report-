@@ -57,6 +57,8 @@ export const MacroSection: React.FC<SectionProps> = ({ report }) => {
 
 export const ValuationBenchmarkSection: React.FC<SectionProps> = ({ report }) => {
   const { valuation } = report;
+  const hasEvSales = Boolean(valuation.fiveYearForwardEvSales && valuation.fiveYearForwardEvSales !== 'N/A');
+  const hasPe = Boolean(valuation.fiveYearForwardPe && valuation.fiveYearForwardPe !== 'N/A');
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -65,17 +67,25 @@ export const ValuationBenchmarkSection: React.FC<SectionProps> = ({ report }) =>
           Price vs. Its Own 5-Year Average
         </h3>
         <div className="space-y-2.5 text-xs leading-relaxed">
-          <div className="bg-[#0B111E]/70 border border-slate-800/80 rounded p-3">
-            <span className="font-semibold text-slate-200">Forward EV/Sales: </span>
-            <span className="text-slate-300">{valuation.fiveYearForwardEvSales}</span>
-          </div>
-          <div className="bg-[#0B111E]/70 border border-slate-800/80 rounded p-3">
-            <span className="font-semibold text-slate-200">Forward P/E: </span>
-            <span className="text-slate-300">{valuation.fiveYearForwardPe}</span>
-          </div>
-          {valuation.fiveYearTakeaway && (
-            <p className="text-slate-300 pt-1">{valuation.fiveYearTakeaway}</p>
+          {hasEvSales && (
+            <div className="bg-[#0B111E]/70 border border-slate-800/80 rounded p-3">
+              <span className="font-semibold text-slate-200">Forward EV/Sales: </span>
+              <span className="text-slate-300">{valuation.fiveYearForwardEvSales}</span>
+            </div>
           )}
+          {hasPe && (
+            <div className="bg-[#0B111E]/70 border border-slate-800/80 rounded p-3">
+              <span className="font-semibold text-slate-200">Forward P/E: </span>
+              <span className="text-slate-300">{valuation.fiveYearForwardPe}</span>
+            </div>
+          )}
+          {valuation.fiveYearTakeaway ? (
+            <p className="text-xs sm:text-sm text-slate-300 pt-1 leading-relaxed">
+              {valuation.fiveYearTakeaway}
+            </p>
+          ) : !hasEvSales && !hasPe ? (
+            <p className="text-xs text-slate-500">No 5-year valuation comparison provided.</p>
+          ) : null}
         </div>
       </div>
 
@@ -85,7 +95,7 @@ export const ValuationBenchmarkSection: React.FC<SectionProps> = ({ report }) =>
             Stock vs. Sector ETF ({valuation.sectorEtf})
           </h3>
           <span
-            className={`font-mono text-xs font-semibold ${
+            className={`font-mono text-xs font-semibold whitespace-nowrap ${
               /outperform/i.test(valuation.etfCall)
                 ? 'text-emerald-400'
                 : /underperform/i.test(valuation.etfCall)

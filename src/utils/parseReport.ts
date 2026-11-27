@@ -194,12 +194,14 @@ function extractLabeledValue(block: string, labelPattern: RegExp): string {
 function splitSections(markdown: string): {
   preamble: string;
   sections: Map<string, string>;
+  sectionHeadings: Map<string, string>;
   rawSections: Array<{ heading: string; body: string }>;
 } {
   const lines = markdown.split(/\r?\n/);
   const preambleLines: string[] = [];
   const rawSections: Array<{ heading: string; body: string }> = [];
   const sections = new Map<string, string>();
+  const sectionHeadings = new Map<string, string>();
 
   let currentKey = '';
   let currentHeading = '';
@@ -209,6 +211,7 @@ function splitSections(markdown: string): {
     if (currentKey) {
       const bodyStr = currentBody.join('\n').trim();
       sections.set(currentKey, bodyStr);
+      sectionHeadings.set(currentKey, currentHeading);
       rawSections.push({ heading: currentHeading, body: bodyStr });
     }
   };
@@ -250,23 +253,32 @@ function splitSections(markdown: string): {
   for (const [, body] of sections.entries()) {
     const subLines = body.split(/\r?\n/);
     let subKey = '';
+    let subHeading = '';
     let subBuf: string[] = [];
     for (const sl of subLines) {
-      const sm = sl.match(/^#{3,4}\s+(\d+[a-e])\.\s+/i);
+      const sm = sl.match(/^#{3,4}\s+(\d+[a-e])\.\s+(.+)$/i);
       if (sm) {
-        if (subKey) sections.set(subKey, subBuf.join('\n').trim());
+        if (subKey) {
+          sections.set(subKey, subBuf.join('\n').trim());
+          sectionHeadings.set(subKey, subHeading);
+        }
         subKey = sm[1].toLowerCase();
+        subHeading = sm[2].trim();
         subBuf = [];
       } else if (subKey) {
         subBuf.push(sl);
       }
     }
-    if (subKey) sections.set(subKey, subBuf.join('\n').trim());
+    if (subKey) {
+      sections.set(subKey, subBuf.join('\n').trim());
+      sectionHeadings.set(subKey, subHeading);
+    }
   }
 
   return {
     preamble: preambleLines.join('\n').trim(),
     sections,
+    sectionHeadings,
     rawSections,
   };
 }
@@ -281,7 +293,7 @@ function normalizeVerdict(text: string): TradeVerdict {
 
 export function parseTradeReport(rawMarkdown: string, existingId?: string): ParsedTradeReport {
   const md = rawMarkdown.trim();
-  const { preamble, sections, rawSections } = splitSections(md);
+  const { preamble, sections, sectionHeadings, rawSections } = splitSections(md);
 
   const titleMatch = md.match(/^#\s+(.+)$/m);
   const title = titleMatch ? stripMd(titleMatch[1]) : 'Tactical Stock Trade Report';
@@ -428,12 +440,56 @@ export function parseTradeReport(rawMarkdown: string, existingId?: string): Pars
     }
   }
 
-  const fiveYearForwardEvSales = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Forward EV\/Sales:\*\*\s*(.+)$/i)));
-  const fiveYearForwardPe = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Forward P\/E:\*\*\s*(.+)$/i)));
-  const fiveYearTakeaway = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Takeaway:\*\*\s*(.+)$/i)));
-  const sectorEtf = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Sector ETF:\*\*\s*(.+)$/i)));
-  const etfComparison = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Comparison & Call:\*\*\s*(.+)$/i)));
-  const etfCallMatch = (sec3c.match(/\*\*2–3 Month Call:\*\*\s*\*\*([^*]+)\*\*/i) ||
+  const sec3bClean = stripSources(stripMd(sec3b)).replace(/\s+/g, ' ').trim();
+  const labeledEvSales = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Forward EV\/Sales:\*\*\s*(.+)$/i)));
+  const labeledPe = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Forward P\/E:\*\*\s*(.+)$/i)));
+  const labeledTakeaway3b = stripSources(stripMd(extractLabeledValue(sec3b, /\*\*Takeaway:\*\*\s*(.+)$/i)));
+
+  // Prose fallbacks for 3b (e.g. RBRK format without labeled bullets)
+  const sentences3b = sec3bClean
+    .split(/\.(?=\s+[A-Z]|$)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const evSentence = sentences3b.find((s) => /\bEV\/Sales\b/i.test(s)) || '';
+  const peSentence = sentences3b.find((s) => /\bP\/E\b/i.test(s)) || '';
+
+  let evFallback = '';
+  let peFallback = '';
+  if (evSentence && evSentence === peSentence) {
+    const splitWhile = evSentence.split(/,\s*while\s+(?:its\s+)?/i);
+    if (splitWhile.length >= 2) {
+      evFallback = splitWhile[0].trim();
+      peFallback = splitWhile.slice(1).join(', while ').trim();
+    } else {
+      evFallback = evSentence;
+    }
+  } else {
+    evFallback = evSentence;
+    peFallback = peSentence;
+  }
+
+  const remaining3b = sentences3b
+    .filter((s) => s !== evSentence && s !== peSentence)
+    .join('. ');
+
+  const fiveYearForwardEvSales = labeledEvSales || evFallback;
+  const fiveYearForwardPe = labeledPe || peFallback;
+  const fiveYearTakeaway = labeledTakeaway3b || (remaining3b ? `${remaining3b}.` : sec3bClean);
+
+  const sec3cHeading = stripMd(sectionHeadings.get('3c') || '');
+  const sec3cClean = stripSources(stripMd(sec3c)).replace(/\s+/g, ' ').trim();
+  const labeledSectorEtf = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Sector ETF:\*\*\s*(.+)$/i)));
+  const etfFromHeading = sec3cHeading.match(/\(([A-Z]{2,5})\)/)?.[1];
+  const etfFromBody =
+    sec3cClean.match(/(?:Compared to\s+(?:the\s+)?|vs\.?\s+(?:the\s+)?)([A-Z][A-Za-z0-9&\s-]{2,60}?ETF\s*\([A-Z]{2,5}\))/i)?.[1] ||
+    sec3cClean.match(/\(([A-Z]{2,5})\)/)?.[1];
+  const sectorEtf = labeledSectorEtf || etfFromBody || etfFromHeading || '';
+
+  const labeledEtfComparison = stripSources(stripMd(extractLabeledValue(sec3c, /\*\*Comparison & Call:\*\*\s*(.+)$/i)));
+  const etfComparison = labeledEtfComparison || sec3cClean;
+
+  const etfCallMatch = (sec3c.match(/\*\*2–3 Month Call[^:]*:\s*([^*\n]+)\*\*/i) ||
+    sec3c.match(/2–3 Month Call[^:]*:\s*(Outperform|Underperform|Match)/i) ||
     sec3c.match(/\b(Outperform|Underperform|Match)\b/i));
   const etfCall = etfCallMatch ? stripMd(etfCallMatch[1]) : 'Neutral';
 
@@ -574,7 +630,9 @@ export function parseTradeReport(rawMarkdown: string, existingId?: string): Pars
   const resistanceStr = stripMd(extractLabeledValue(sec8a, /\*\*Key Resistance[^:]*:\*\*\s*(.+)$/i));
   const chartVerdict = stripSources(stripMd(extractLabeledValue(sec8a, /\*\*Chart Verdict:\*\*\s*(.+)$/i)));
 
-  const avgEarningsMove = stripSources(stripMd(extractLabeledValue(sec8b, /\*\*Average Earnings Move[^:]*:\*\*\s*(.+)$/i)));
+  const avgEarningsMove =
+    stripSources(stripMd(extractLabeledValue(sec8b, /\*\*Average Earnings Move[^:]*:\*\*\s*(.+)$/i))) ||
+    stripSources(stripMd(sec8b)).replace(/\s+/g, ' ').trim();
   const postEarningsDrift = stripSources(stripMd(extractLabeledValue(sec8b, /\*\*Post-Earnings Drift:\*\*\s*(.+)$/i)));
 
   const sec8cTables = parseMarkdownTables(sec8c);
@@ -651,7 +709,9 @@ export function parseTradeReport(rawMarkdown: string, existingId?: string): Pars
           ? 'Average'
           : 'Unknown';
 
-  const macroFit = stripSources(stripMd(extractLabeledValue(sec9e, /\*\*Macro Fit:\*\*\s*(.+)$/i)));
+  const macroFit =
+    stripSources(stripMd(extractLabeledValue(sec9e, /\*\*Macro Fit:\*\*\s*(.+)$/i))) ||
+    stripSources(stripMd(sec9e)).replace(/\s+/g, ' ').trim();
   const positionSize = stripSources(stripMd(extractLabeledValue(sec9e, /\*\*Position Size:\*\*\s*(.+)$/i)));
 
   // Section 10: Trade Card
